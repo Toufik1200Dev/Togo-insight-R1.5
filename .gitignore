@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+
+# Production
+/dist
+
+# Env files (never commit secrets)
+.env
+.env*.local
+.env.production
+
+# Prisma
+/prisma/*.db
+
+# Local keyless-mode data (JSON store + uploaded files)
+/.data/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.suo
+*.sln
+
+# Azure
+.azure/
+
+# TypeScript
+*.tsbuildinfo

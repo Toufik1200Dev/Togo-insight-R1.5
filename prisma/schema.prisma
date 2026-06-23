@@ -1,0 +1,63 @@
+// Togo Insight R1.5 — Prisma schema (Azure Database for PostgreSQL)
+// Run `npx prisma db push` (or `prisma migrate`) after setting DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Application user. Created via email/password signup or auto-provisioned
+/// on first "Login with Microsoft" (Entra ID).
+model User {
+  id        String   @id @default(uuid())
+  firstName String
+  lastName  String
+  country   String?
+  phone     String?
+  email     String   @unique
+  /// Null for users who only sign in with Microsoft (no local password).
+  password  String?
+  /// "credentials" | "azure-ad"
+  provider  String   @default("credentials")
+  /// Entra ID object id (oid) when signed in with Microsoft.
+  entraOid  String?  @unique
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  files File[]
+}
+
+/// Metadata for a file uploaded to Azure Blob Storage and its processed outputs.
+/// The original CSV lands in INPUT/, processed XLSX outputs appear in OUTPUT/.
+model File {
+  id            String   @id @default(uuid())
+  userId        String
+  fileName      String
+  originalName  String
+  fileToken     String   @unique @default(uuid())
+  fileReference String
+  /// "original" | "lillybelle" | "arcep"
+  fileType      String   @default("original")
+  azurePath     String?
+  isReady       Boolean  @default(false)
+  uploadedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([fileReference])
+}
+
+/// Contact form submissions from the public site.
+model Contact {
+  id      String   @id @default(uuid())
+  name    String
+  email   String
+  message String   @db.Text
+  date    DateTime @default(now())
+}
