@@ -1,11 +1,6 @@
-"use client";
-
-import { useState } from "react";
-
 /**
- * App logo. Renders the real /logo.png (in /public) and only falls back to the
- * on-brand /logo.svg placeholder if the PNG is missing — so the actual logo
- * shows everywhere, with no placeholder-icon flash.
+ * App logo — the Togo Insight circular 5G emblem (public/logo.svg, vector so it
+ * stays crisp at any size). Used in the navbar, dashboard sidebar, login & signup.
  */
 export default function Logo({
   height = 52,
@@ -16,18 +11,8 @@ export default function Logo({
   className?: string;
   alt?: string;
 }) {
-  const [src, setSrc] = useState("/logo.png");
-
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt}
-      className={className}
-      style={{ height, width: "auto" }}
-      onError={() => {
-        if (src !== "/logo.svg") setSrc("/logo.svg");
-      }}
-    />
+    <img src="/logo.svg" alt={alt} className={className} style={{ height, width: "auto" }} />
   );
 }

@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: "Togo Insight | 5G & Network Analytics",
   description:
     "Togo Insight — next-gen 5G network optimization and telecom analytics. Upload data, process it on Microsoft Azure, and explore Power BI dashboards.",
-  icons: { icon: "/logo.png" },
+  icons: { icon: "/logo.svg" },
 };
 
 export const viewport: Viewport = {
