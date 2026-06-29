@@ -22,8 +22,8 @@ export async function GET(_req: Request, { params }: { params: { reference: stri
   const azureFiles = await findFilesByReference(reference);
 
   for (const dbFile of dbFiles) {
-    if (dbFile.fileType !== "lillybelle" && dbFile.fileType !== "arcep") continue;
-    const best = pickBestAzureMatch(azureFiles, dbFile.fileType);
+    if (dbFile.fileType !== "output") continue;
+    const best = pickBestAzureMatch(azureFiles);
     if (best && (!dbFile.isReady || dbFile.azurePath !== best.path)) {
       await store.updateFile(dbFile.id, { azurePath: best.path, isReady: true });
     }

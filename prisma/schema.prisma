@@ -41,7 +41,7 @@ model File {
   originalName  String
   fileToken     String   @unique @default(uuid())
   fileReference String
-  /// "original" | "lillybelle" | "arcep"
+  /// "original" (uploaded CSV) | "output" (single calculated result file)
   fileType      String   @default("original")
   azurePath     String?
   isReady       Boolean  @default(false)

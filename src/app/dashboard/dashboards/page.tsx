@@ -30,7 +30,7 @@ export default function DashboardsPage() {
       .then((j) => {
         if (j.success) {
           const list = (j.files as FileItem[])
-            .filter((f) => f.fileType === "lillybelle")
+            .filter((f) => f.fileType === "output")
             .map((f) => f.fileReference);
           setRefs(Array.from(new Set(list)));
         }

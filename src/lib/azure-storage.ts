@@ -103,34 +103,31 @@ export async function findFilesByReference(reference: string): Promise<AzureMatc
   return matches;
 }
 
-/** Prefer a true .xlsx over a misnamed .csv.xlsx for the given output type. */
-export function pickBestAzureMatch(
-  files: AzureMatch[],
-  fileType: "lillybelle" | "arcep" | string
-): AzureMatch | null {
+/**
+ * Pick the single calculated OUTPUT file for a reference. `files` is already
+ * scoped to the reference by findFilesByReference, so just prefer a true .xlsx
+ * over a misnamed .csv.xlsx.
+ */
+export function pickBestAzureMatch(files: AzureMatch[]): AzureMatch | null {
   if (!files.length) return null;
-  const key = fileType === "lillybelle" ? "lillybelle" : "arcep";
-  const candidates = files.filter((f) => f.name.toLowerCase().includes(key));
-  if (!candidates.length) return null;
-  const xlsx = candidates.find((f) => {
+  const xlsx = files.find((f) => {
     const n = f.name.toLowerCase();
     return n.endsWith(".xlsx") && !n.includes(".csv.xlsx");
   });
-  return xlsx || candidates[0];
+  return xlsx || files[0];
 }
 
 /** Resolve an output blob path (handles OUTPUT/ prefix + fallback). */
 export async function resolveOutputBlob(
   preferredPath: string | null | undefined,
   fileName: string,
-  reference: string,
-  fileType: string
+  reference: string
 ): Promise<{ path: string; exists: boolean }> {
   let blobPath = preferredPath || `OUTPUT/${fileName}`;
   const needsResolve = !preferredPath || preferredPath.toLowerCase().includes(".csv.xlsx");
   if (needsResolve) {
     const files = await findFilesByReference(reference);
-    const best = pickBestAzureMatch(files, fileType);
+    const best = pickBestAzureMatch(files);
     if (best) blobPath = best.path;
   }
 
@@ -159,7 +156,7 @@ export async function resolveOutputBlob(
   let exists = await fileExistsLocal(blobPath);
   if (!exists) {
     const files = await findFilesByReference(reference);
-    const best = pickBestAzureMatch(files, fileType);
+    const best = pickBestAzureMatch(files);
     if (best) {
       blobPath = best.path;
       exists = true;
@@ -185,25 +182,28 @@ export async function downloadBlob(blobPath: string): Promise<Buffer> {
   return fs.readFile(localAbs(blobPath));
 }
 
+/** Output file name for a reference (single calculated result). */
+export function outputFileName(reference: string): string {
+  return `calculated_${reference}.xlsx`;
+}
+
 /**
- * Local-only: simulate the external (Snowflake/Power BI) pipeline by immediately
- * writing the two expected OUTPUT files so the upload → process → download flow
- * is fully demoable without any Azure keys.
+ * Local-only: simulate the external (Snowflake) pipeline by immediately writing
+ * the single calculated OUTPUT file so the upload → calcul → dashboard flow is
+ * fully demoable without any Azure or Snowflake keys.
  */
 export async function simulateLocalProcessing(reference: string, originalName: string): Promise<void> {
   if (isStorageConfigured()) return;
   const stamp = new Date().toISOString();
-  const note = (kind: string) =>
-    Buffer.from(
-      `Togo Insight — ${kind} output (LOCAL DEMO)\r\n` +
-        `reference,${reference}\r\n` +
-        `source,${originalName}\r\n` +
-        `generated,${stamp}\r\n` +
-        `note,This placeholder is created by local keyless mode. In production an external pipeline writes the real XLSX.\r\n`,
-      "utf8"
-    );
-  await writeOutput(`lillybelle_output_${reference}.xlsx`, note("Lillybelle"));
-  await writeOutput(`ARCEP_output_${reference}.xlsx`, note("ARCEP"));
+  const note = Buffer.from(
+    `Togo Insight — calculated output (LOCAL DEMO)\r\n` +
+      `reference,${reference}\r\n` +
+      `source,${originalName}\r\n` +
+      `generated,${stamp}\r\n` +
+      `note,This placeholder is created by local keyless mode. In production Snowflake writes the real XLSX.\r\n`,
+    "utf8"
+  );
+  await writeOutput(outputFileName(reference), note);
 }
 
 export { CONTAINER_NAME };

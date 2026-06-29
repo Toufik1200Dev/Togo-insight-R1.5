@@ -408,6 +408,84 @@
 .pipe-step .ps { font-size: 0.9rem; font-weight: 600; margin-top: 2px; }
 .pipe-arrow { color: rgba(34, 211, 238, 0.5); font-size: 1.1rem; }
 
+/* ---- "En train de calculer…" panel ---- */
+.calc-panel {
+  margin-top: 18px;
+  padding: 36px 24px;
+  text-align: center;
+  border-radius: 14px;
+  background: rgba(11, 18, 32, 0.45);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  box-shadow: var(--glow-shadow);
+}
+.calc-spinner { font-size: 2.6rem; color: var(--highlight-color); margin-bottom: 14px; }
+.calc-title {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+.calc-dots span {
+  animation: calc-blink 1.4s infinite both;
+}
+.calc-dots span:nth-child(2) { animation-delay: 0.2s; }
+.calc-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes calc-blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+.calc-sub {
+  margin: 10px auto 0;
+  max-width: 440px;
+  font-size: 0.9rem;
+  color: rgba(229, 231, 235, 0.65);
+  line-height: 1.5;
+}
+.calc-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+.calc-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: rgba(11, 18, 32, 0.5);
+  border: 1px solid rgba(34, 211, 238, 0.15);
+  color: rgba(229, 231, 235, 0.6);
+}
+.calc-step.done { color: #7ce6a8; border-color: rgba(46, 204, 113, 0.4); }
+.calc-step.active {
+  color: var(--highlight-color);
+  border-color: rgba(34, 211, 238, 0.5);
+  animation: calc-pulse 1.6s ease-in-out infinite;
+}
+@keyframes calc-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.18); }
+}
+.calc-step-arrow { color: rgba(34, 211, 238, 0.5); font-size: 0.9rem; }
+.calc-timeout { margin-top: 22px; }
+.calc-timeout p { font-size: 0.88rem; color: #ffe08a; margin-bottom: 10px; }
+
+/* ---- Inline dashboard reveal ---- */
+.calc-result { margin-top: 18px; }
+.calc-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.calc-result-head h3 { font-family: "Space Grotesk", sans-serif; font-size: 1.1rem; }
+
 /* ---- History table ---- */
 .history-table {
   width: 100%;

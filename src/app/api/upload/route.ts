@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
-import { isStorageConfigured, simulateLocalProcessing, uploadInput } from "@/lib/azure-storage";
+import { isStorageConfigured, outputFileName, simulateLocalProcessing, uploadInput } from "@/lib/azure-storage";
 import { getStore } from "@/lib/db";
+import { isSnowflakeConfigured, triggerProcessing } from "@/lib/snowflake";
 import { validateCsvContent } from "@/lib/csvValidation";
 
 export const runtime = "nodejs";
@@ -69,22 +70,18 @@ export async function POST(req: Request) {
       azurePath: inputPath,
       isReady: true,
     });
-    const lillybelle = await store.createFile({
+    const output = await store.createFile({
       userId: user.id,
-      fileName: `lillybelle_output_${fileReference}.xlsx`,
+      fileName: outputFileName(fileReference),
       originalName,
       fileReference,
-      fileType: "lillybelle",
-    });
-    const arcep = await store.createFile({
-      userId: user.id,
-      fileName: `ARCEP_output_${fileReference}.xlsx`,
-      originalName,
-      fileReference,
-      fileType: "arcep",
+      fileType: "output",
     });
 
-    // 3) Local keyless mode: simulate the external pipeline so outputs appear.
+    // 3) Kick off the calculation:
+    //    - keyless local mode  → simulate so the calculated file appears instantly
+    //    - Snowflake configured → trigger the proc; it writes the file to OUTPUT/
+    //    - otherwise            → an external pipeline writes to OUTPUT/ (we just wait)
     let localDemo = false;
     if (!isStorageConfigured()) {
       try {
@@ -93,20 +90,27 @@ export async function POST(req: Request) {
       } catch (e) {
         console.error("local processing simulation failed:", e);
       }
+    } else if (isSnowflakeConfigured()) {
+      // Fire-and-forget: the UI polls /api/files/refresh until the output lands.
+      triggerProcessing({
+        reference: fileReference,
+        originalName,
+        inputPath,
+        outputName: outputFileName(fileReference),
+      }).catch((e) => console.error("snowflake trigger failed:", e));
     }
 
     return NextResponse.json({
       success: true,
       message: localDemo
-        ? "✅ File uploaded. Local demo outputs generated — they'll appear as Ready shortly."
-        : "✅ File uploaded for processing. Outputs will appear once the pipeline finishes.",
+        ? "✅ Fichier importé. Calcul de démonstration généré — il apparaîtra dans un instant."
+        : "✅ Fichier importé. Calcul en cours…",
       originalFileName: originalName,
       fileReference,
       localDemo,
       tokens: {
         original: original.fileToken,
-        lillybelle: lillybelle.fileToken,
-        arcep: arcep.fileToken,
+        output: output.fileToken,
       },
     });
   } catch (err) {

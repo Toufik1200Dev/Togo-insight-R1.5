@@ -2,18 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import DashTopbar from "@/components/dashboard/DashTopbar";
 import { useToast } from "@/components/Toast";
 import type { FileItem } from "@/types";
 import { validateCsvContent, type CsvValidationResult } from "@/lib/csvValidation";
 
-type Filter = "all" | "original" | "lillybelle" | "arcep";
-
-const TYPE_LABEL: Record<string, string> = {
-  original: "Original CSV",
-  lillybelle: "Lillybelle",
-  arcep: "ARCEP",
-};
+// powerbi-client references browser globals at import time — load client-side only.
+const PowerBIReport = dynamic(() => import("@/components/PowerBIReport"), {
+  ssr: false,
+  loading: () => (
+    <div className="pbi-frame">
+      <div className="pbi-placeholder">
+        <i className="fas fa-circle-notch fa-spin" aria-hidden="true" />
+        <p>Chargement du dashboard…</p>
+      </div>
+    </div>
+  ),
+});
 
 function fmtDate(iso: string) {
   try {
@@ -36,9 +42,10 @@ export default function FilesPage() {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<"new" | "old" | "name">("new");
   const [activeRef, setActiveRef] = useState<string | null>(null);
+  const [dashboardReady, setDashboardReady] = useState(false);
+  const [calcTimedOut, setCalcTimedOut] = useState(false);
   const [validation, setValidation] = useState<CsvValidationResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -75,18 +82,23 @@ export default function FilesPage() {
                 (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt)
               );
             });
-            const outputs = (json.files as FileItem[]).filter(
-              (f) => f.fileType === "lillybelle" || f.fileType === "arcep"
-            );
+            const outputs = (json.files as FileItem[]).filter((f) => f.fileType === "output");
             if (outputs.length > 0 && outputs.every((f) => f.isReady)) {
               clearInterval(id);
-              toast("All processed files are ready!", "success");
+              setDashboardReady(true);
+              toast("Calcul terminé — votre dashboard est prêt.", "success");
             }
           }
         } catch {
           /* keep polling */
         }
-        if (tries >= max) clearInterval(id);
+        if (tries >= max) {
+          clearInterval(id);
+          setDashboardReady((ready) => {
+            if (!ready) setCalcTimedOut(true);
+            return ready;
+          });
+        }
       }, 5000);
     },
     [toast]
@@ -102,6 +114,8 @@ export default function FilesPage() {
 
       // Client-side sanity check BEFORE uploading — pinpoints exactly what's wrong.
       setValidation(null);
+      setDashboardReady(false);
+      setCalcTimedOut(false);
       let text: string;
       try {
         text = await file.text();
@@ -158,9 +172,9 @@ export default function FilesPage() {
     }
   }
 
+  // Inputs only: the user uploads CSVs; processed outputs are never surfaced as files.
   const visible = useMemo(() => {
-    let list = [...files];
-    if (filter !== "all") list = list.filter((f) => f.fileType === filter);
+    let list = files.filter((f) => f.fileType === "original");
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -173,19 +187,33 @@ export default function FilesPage() {
       return sort === "new" ? -t : t;
     });
     return list;
-  }, [files, filter, search, sort]);
+  }, [files, search, sort]);
+
+  // Has every output for this reference finished processing?
+  const isReferenceDone = useCallback(
+    (reference: string) => {
+      const outs = files.filter((f) => f.fileReference === reference && f.fileType === "output");
+      return outs.length > 0 && outs.every((f) => f.isReady);
+    },
+    [files]
+  );
 
   const counts = useMemo(() => {
+    const originals = files.filter((f) => f.fileType === "original");
+    const refs = Array.from(new Set(originals.map((f) => f.fileReference)));
+    const done = refs.filter((ref) => isReferenceDone(ref)).length;
     return {
-      total: files.length,
-      original: files.filter((f) => f.fileType === "original").length,
-      lillybelle: files.filter((f) => f.fileType === "lillybelle").length,
-      arcep: files.filter((f) => f.fileType === "arcep").length,
-      ready: files.filter((f) => (f.fileType === "lillybelle" || f.fileType === "arcep") && f.isReady).length,
+      imported: originals.length,
+      done,
+      processing: refs.length - done,
     };
-  }, [files]);
+  }, [files, isReferenceDone]);
 
-  const activeGroup = activeRef ? files.filter((f) => f.fileReference === activeRef) : [];
+  function resetUpload() {
+    setActiveRef(null);
+    setDashboardReady(false);
+    setCalcTimedOut(false);
+  }
 
   return (
     <>
@@ -282,27 +310,48 @@ export default function FilesPage() {
               </div>
             )}
 
-            {activeGroup.length > 0 && (
-              <div className="pipeline">
-                <div className="pipe-step">
-                  <div className="pi"><i className="fas fa-file-csv" /></div>
-                  <div className="pl">Original</div>
-                  <div className="ps">Uploaded</div>
+            {/* Processing → calculating animation, then the dashboard, inline. */}
+            {activeRef && !dashboardReady && (
+              <div className="calc-panel" role="status" aria-live="polite">
+                <div className="calc-spinner" aria-hidden="true">
+                  <i className="fas fa-circle-notch fa-spin" />
                 </div>
-                <div className="pipe-arrow"><i className="fas fa-arrow-right" /></div>
-                {["lillybelle", "arcep"].map((t) => {
-                  const f = activeGroup.find((x) => x.fileType === t);
-                  const ready = f?.isReady;
-                  return (
-                    <div className="pipe-step" key={t}>
-                      <div className="pi">
-                        <i className={`fas ${ready ? "fa-circle-check" : "fa-hourglass-half fa-spin"}`} />
-                      </div>
-                      <div className="pl">{TYPE_LABEL[t]} output</div>
-                      <div className="ps">{ready ? "Ready" : "Processing…"}</div>
-                    </div>
-                  );
-                })}
+                <div className="calc-title">
+                  En train de calculer<span className="calc-dots"><span>.</span><span>.</span><span>.</span></span>
+                </div>
+                <p className="calc-sub">
+                  Vos données sont calculées dans Snowflake, puis envoyées à Power BI pour générer votre dashboard.
+                </p>
+                <div className="calc-steps" aria-hidden="true">
+                  <span className="calc-step done"><i className="fas fa-file-csv" /> CSV importé</span>
+                  <i className="fas fa-arrow-right calc-step-arrow" />
+                  <span className="calc-step active"><i className="fas fa-snowflake" /> Calcul Snowflake</span>
+                  <i className="fas fa-arrow-right calc-step-arrow" />
+                  <span className="calc-step"><i className="fas fa-chart-column" /> Power BI</span>
+                </div>
+                {calcTimedOut && (
+                  <div className="calc-timeout">
+                    <p>Le calcul prend plus de temps que prévu.</p>
+                    <button type="button" className="btn-ghost" onClick={() => setDashboardReady(true)}>
+                      <i className="fas fa-chart-column" /> Afficher le dashboard
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeRef && dashboardReady && (
+              <div className="calc-result">
+                <div className="calc-result-head">
+                  <h3>
+                    <i className="fas fa-circle-check" style={{ color: "#7ce6a8", marginRight: 8 }} />
+                    Votre dashboard
+                  </h3>
+                  <button type="button" className="btn-ghost" onClick={resetUpload}>
+                    <i className="fas fa-rotate-right" /> Charger un nouveau fichier
+                  </button>
+                </div>
+                <PowerBIReport />
               </div>
             )}
           </div>
@@ -332,19 +381,6 @@ export default function FilesPage() {
               </select>
             </div>
 
-            <div className="chip-group" style={{ marginBottom: 16 }}>
-              {(["all", "original", "lillybelle", "arcep"] as Filter[]).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={`chip ${filter === f ? "active" : ""}`}
-                  onClick={() => setFilter(f)}
-                >
-                  {f === "all" ? "All" : TYPE_LABEL[f]}
-                </button>
-              ))}
-            </div>
-
             {loading ? (
               <div className="empty-state">
                 <i className="fas fa-circle-notch fa-spin" />
@@ -358,11 +394,11 @@ export default function FilesPage() {
             ) : (
               <div className="file-list">
                 {visible.map((f) => {
-                  const isOutput = f.fileType === "lillybelle" || f.fileType === "arcep";
+                  const done = isReferenceDone(f.fileReference);
                   return (
                     <div className="file-row" key={f.id}>
                       <div className="file-ic">
-                        <i className={`fas ${f.fileType === "original" ? "fa-file-csv" : "fa-file-excel"}`} />
+                        <i className="fas fa-file-csv" />
                       </div>
                       <div className="file-meta">
                         <div className="file-name">{f.fileName}</div>
@@ -370,21 +406,9 @@ export default function FilesPage() {
                           Ref {f.fileReference} · {fmtDate(f.uploadedAt)}
                         </div>
                       </div>
-                      <span className={`badge ${f.fileType}`}>{TYPE_LABEL[f.fileType] || f.fileType}</span>
-                      {isOutput && (
-                        <span className={`badge ${f.isReady ? "ready" : "pending"}`}>
-                          {f.isReady ? "Ready" : "Processing"}
-                        </span>
-                      )}
-                      {isOutput && f.isReady && (
-                        <a
-                          className="icon-btn"
-                          href={`/api/download/${f.fileToken}`}
-                          title="Download"
-                        >
-                          <i className="fas fa-download" />
-                        </a>
-                      )}
+                      <span className={`badge ${done ? "ready" : "pending"}`}>
+                        {done ? "Terminé" : "En cours"}
+                      </span>
                       <button
                         type="button"
                         className="icon-btn danger"
@@ -405,11 +429,9 @@ export default function FilesPage() {
         <aside>
           <div className="rail-card">
             <h3 style={{ fontFamily: "Space Grotesk, sans-serif", marginBottom: 10 }}>Summary</h3>
-            <div className="rail-stat"><span className="k">Total files</span><span className="v">{counts.total}</span></div>
-            <div className="rail-stat"><span className="k">Original CSV</span><span className="v">{counts.original}</span></div>
-            <div className="rail-stat"><span className="k">Lillybelle</span><span className="v">{counts.lillybelle}</span></div>
-            <div className="rail-stat"><span className="k">ARCEP</span><span className="v">{counts.arcep}</span></div>
-            <div className="rail-stat"><span className="k">Outputs ready</span><span className="v">{counts.ready}</span></div>
+            <div className="rail-stat"><span className="k">Fichiers importés</span><span className="v">{counts.imported}</span></div>
+            <div className="rail-stat"><span className="k">Calculs terminés</span><span className="v">{counts.done}</span></div>
+            <div className="rail-stat"><span className="k">En cours</span><span className="v">{counts.processing}</span></div>
           </div>
 
           <div className="rail-card">

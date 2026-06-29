@@ -41,7 +41,7 @@ export default function HistoryPage() {
 
   return (
     <>
-      <DashTopbar title="History" subtitle="Every upload and its processed Lillybelle / ARCEP outputs, grouped by reference." />
+      <DashTopbar title="History" subtitle="Tous vos imports CSV et l'état de leur calcul, regroupés par référence." />
 
       <div className="panel">
         <div className="toolbar">
@@ -68,36 +68,22 @@ export default function HistoryPage() {
                 <tr>
                   <th>Reference</th>
                   <th>Original file</th>
-                  <th>Lillybelle</th>
-                  <th>ARCEP</th>
+                  <th>Statut</th>
                   <th>Date</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((g) => {
-                  const lb = pick(g.files, "lillybelle");
-                  const ar = pick(g.files, "arcep");
+                  const out = pick(g.files, "output");
+                  const done = Boolean(out?.isReady);
                   return (
                     <tr key={g.reference}>
                       <td><span className="badge original">#{g.reference}</span></td>
                       <td className="truncate">{g.originalName}</td>
                       <td>
-                        {lb?.isReady ? (
-                          <a className="link-dl" href={`/api/download/${lb.fileToken}`}>
-                            <i className="fas fa-download" /> Download
-                          </a>
-                        ) : (
-                          <span className="badge pending">Processing</span>
-                        )}
-                      </td>
-                      <td>
-                        {ar?.isReady ? (
-                          <a className="link-dl" href={`/api/download/${ar.fileToken}`}>
-                            <i className="fas fa-download" /> Download
-                          </a>
-                        ) : (
-                          <span className="badge pending">Processing</span>
-                        )}
+                        <span className={`badge ${done ? "ready" : "pending"}`}>
+                          {done ? "Terminé" : "En cours"}
+                        </span>
                       </td>
                       <td>{fmtDate(g.uploadedAt)}</td>
                     </tr>

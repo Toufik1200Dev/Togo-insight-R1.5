@@ -20,8 +20,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     const { path, exists } = await resolveOutputBlob(
       file.azurePath,
       file.fileName,
-      file.fileReference,
-      file.fileType
+      file.fileReference
     );
 
     if (!exists) {
@@ -37,8 +36,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     }
 
     const buffer = await downloadBlob(path);
-    const isXlsx =
-      file.fileType === "lillybelle" || file.fileType === "arcep" || file.fileName.toLowerCase().endsWith(".xlsx");
+    const isXlsx = file.fileType === "output" || file.fileName.toLowerCase().endsWith(".xlsx");
     const contentType = isXlsx
       ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       : "text/csv";
