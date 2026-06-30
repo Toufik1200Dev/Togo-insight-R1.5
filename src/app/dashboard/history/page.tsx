@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import DashTopbar from "@/components/dashboard/DashTopbar";
-import type { FileGroup, FileItem } from "@/types";
+import type { FileGroup } from "@/types";
 
 function fmtDate(iso: string) {
   try {
@@ -35,13 +35,9 @@ export default function HistoryPage() {
     );
   }, [groups, search]);
 
-  function pick(files: FileItem[], type: string) {
-    return files.find((f) => f.fileType === type);
-  }
-
   return (
     <>
-      <DashTopbar title="History" subtitle="Tous vos imports CSV et l'état de leur calcul, regroupés par référence." />
+      <DashTopbar title="History" subtitle="Tous vos imports CSV, regroupés par référence." />
 
       <div className="panel">
         <div className="toolbar">
@@ -67,28 +63,18 @@ export default function HistoryPage() {
               <thead>
                 <tr>
                   <th>Reference</th>
-                  <th>Original file</th>
-                  <th>Statut</th>
+                  <th>Fichier importé</th>
                   <th>Date</th>
                 </tr>
               </thead>
               <tbody>
-                {visible.map((g) => {
-                  const out = pick(g.files, "output");
-                  const done = Boolean(out?.isReady);
-                  return (
-                    <tr key={g.reference}>
-                      <td><span className="badge original">#{g.reference}</span></td>
-                      <td className="truncate">{g.originalName}</td>
-                      <td>
-                        <span className={`badge ${done ? "ready" : "pending"}`}>
-                          {done ? "Terminé" : "En cours"}
-                        </span>
-                      </td>
-                      <td>{fmtDate(g.uploadedAt)}</td>
-                    </tr>
-                  );
-                })}
+                {visible.map((g) => (
+                  <tr key={g.reference}>
+                    <td><span className="badge original">#{g.reference}</span></td>
+                    <td className="truncate">{g.originalName}</td>
+                    <td>{fmtDate(g.uploadedAt)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

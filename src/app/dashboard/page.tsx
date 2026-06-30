@@ -45,9 +45,11 @@ export default function FilesPage() {
   const [sort, setSort] = useState<"new" | "old" | "name">("new");
   const [activeRef, setActiveRef] = useState<string | null>(null);
   const [dashboardReady, setDashboardReady] = useState(false);
-  const [calcTimedOut, setCalcTimedOut] = useState(false);
+  const [calcNote, setCalcNote] = useState<string | null>(null);
+  const [calcError, setCalcError] = useState<string | null>(null);
   const [validation, setValidation] = useState<CsvValidationResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pollIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadFiles = useCallback(async () => {
     try {
@@ -65,41 +67,56 @@ export default function FilesPage() {
     loadFiles();
   }, [loadFiles]);
 
-  // Poll Azure for processed outputs after an upload.
-  const pollRefresh = useCallback(
-    (reference: string) => {
+  // Stop polling when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (pollIdRef.current) clearInterval(pollIdRef.current);
+    };
+  }, []);
+
+  // After upload, watch the Azure Data Factory pipeline run that the blob event
+  // triggered. When it succeeds, reveal the (live, Snowflake-backed) dashboard.
+  const pollAdf = useCallback(
+    (sinceIso: string, fileName: string) => {
       let tries = 0;
-      const max = 60; // ~5 min at 5s
+      const max = 120; // ~10 min at 5s
       const id = setInterval(async () => {
         tries += 1;
         try {
-          const res = await fetch(`/api/files/refresh/${reference}`, { cache: "no-store" });
+          const qs = new URLSearchParams({ since: sinceIso, file: fileName });
+          const res = await fetch(`/api/adf/status?${qs.toString()}`, { cache: "no-store" });
           const json = await res.json();
           if (res.ok && json.success) {
-            setFiles((prev) => {
-              const others = prev.filter((f) => f.fileReference !== reference);
-              return [...json.files, ...others].sort(
-                (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt)
+            if (json.configured === false) {
+              // ADF not wired (e.g. local dev) — let the user reveal manually.
+              clearInterval(id);
+              setCalcNote(
+                "Le calcul s'exécute dans Azure Data Factory. Affichez le dashboard dès qu'il est prêt."
               );
-            });
-            const outputs = (json.files as FileItem[]).filter((f) => f.fileType === "output");
-            if (outputs.length > 0 && outputs.every((f) => f.isReady)) {
+              return;
+            }
+            if (json.status === "succeeded") {
               clearInterval(id);
               setDashboardReady(true);
               toast("Calcul terminé — votre dashboard est prêt.", "success");
+              return;
             }
+            if (json.status === "failed") {
+              clearInterval(id);
+              setCalcError("Le calcul a échoué dans Azure Data Factory.");
+              return;
+            }
+            // pending | running → keep polling
           }
         } catch {
           /* keep polling */
         }
         if (tries >= max) {
           clearInterval(id);
-          setDashboardReady((ready) => {
-            if (!ready) setCalcTimedOut(true);
-            return ready;
-          });
+          setCalcNote("Le calcul prend plus de temps que prévu.");
         }
       }, 5000);
+      return id;
     },
     [toast]
   );
@@ -115,7 +132,8 @@ export default function FilesPage() {
       // Client-side sanity check BEFORE uploading — pinpoints exactly what's wrong.
       setValidation(null);
       setDashboardReady(false);
-      setCalcTimedOut(false);
+      setCalcNote(null);
+      setCalcError(null);
       let text: string;
       try {
         text = await file.text();
@@ -138,10 +156,11 @@ export default function FilesPage() {
         const res = await fetch("/api/upload", { method: "POST", body: fd });
         const json = await res.json();
         if (res.ok && json.success) {
-          toast("File uploaded. Processing started…", "success");
+          toast("Fichier importé. Calcul en cours…", "success");
           setActiveRef(json.fileReference);
           await loadFiles();
-          pollRefresh(json.fileReference);
+          if (pollIdRef.current) clearInterval(pollIdRef.current);
+          pollIdRef.current = pollAdf(json.uploadedAt || new Date().toISOString(), file.name);
         } else {
           if (json.validation) setValidation(json.validation as CsvValidationResult);
           toast(json.message || "Upload failed.", "error");
@@ -153,7 +172,7 @@ export default function FilesPage() {
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [loadFiles, pollRefresh, toast]
+    [loadFiles, pollAdf, toast]
   );
 
   async function handleDelete(id: string) {
@@ -172,7 +191,7 @@ export default function FilesPage() {
     }
   }
 
-  // Inputs only: the user uploads CSVs; processed outputs are never surfaced as files.
+  // Inputs only: the user uploads CSVs; results live in Snowflake, surfaced via Power BI.
   const visible = useMemo(() => {
     let list = files.filter((f) => f.fileType === "original");
     if (search.trim()) {
@@ -189,37 +208,24 @@ export default function FilesPage() {
     return list;
   }, [files, search, sort]);
 
-  // Has every output for this reference finished processing?
-  const isReferenceDone = useCallback(
-    (reference: string) => {
-      const outs = files.filter((f) => f.fileReference === reference && f.fileType === "output");
-      return outs.length > 0 && outs.every((f) => f.isReady);
-    },
+  const importedCount = useMemo(
+    () => files.filter((f) => f.fileType === "original").length,
     [files]
   );
 
-  const counts = useMemo(() => {
-    const originals = files.filter((f) => f.fileType === "original");
-    const refs = Array.from(new Set(originals.map((f) => f.fileReference)));
-    const done = refs.filter((ref) => isReferenceDone(ref)).length;
-    return {
-      imported: originals.length,
-      done,
-      processing: refs.length - done,
-    };
-  }, [files, isReferenceDone]);
-
   function resetUpload() {
+    if (pollIdRef.current) clearInterval(pollIdRef.current);
     setActiveRef(null);
     setDashboardReady(false);
-    setCalcTimedOut(false);
+    setCalcNote(null);
+    setCalcError(null);
   }
 
   return (
     <>
       <DashTopbar
         title="Files"
-        subtitle="Upload your network CSV files. They are stored on Azure, processed, and surfaced as Power BI dashboards."
+        subtitle="Importez vos CSV réseau. Ils sont chargés dans Snowflake via Azure Data Factory, puis affichés en direct dans Power BI."
       />
 
       <div className="dash-grid">
@@ -249,7 +255,7 @@ export default function FilesPage() {
                 <i className={`fas ${uploading ? "fa-spinner fa-spin" : "fa-cloud-arrow-up"}`} />
               </div>
               <div className="up-title">{uploading ? "Uploading…" : "Drag & drop your CSV here"}</div>
-              <div className="up-hint">or click to browse · CSV only · outputs are produced as XLSX</div>
+              <div className="up-hint">or click to browse · CSV only</div>
               <input
                 ref={inputRef}
                 type="file"
@@ -265,8 +271,9 @@ export default function FilesPage() {
             <div className="upload-note">
               <i className="fas fa-circle-info" />
               <span>
-                Keep the export naming format (e.g. <code>RawData_ExportToCsv_2025…csv</code>) so the
-                reference number is detected and matched to its outputs.
+                Keep the export naming format (e.g. <code>RawData_ExportToCsv_2025…csv</code>). The file is
+                loaded into Snowflake by Azure Data Factory and surfaced live in Power BI — no files are
+                returned.
               </span>
             </div>
 
@@ -310,7 +317,7 @@ export default function FilesPage() {
               </div>
             )}
 
-            {/* Processing → calculating animation, then the dashboard, inline. */}
+            {/* Processing → calculating animation, then the live dashboard, inline. */}
             {activeRef && !dashboardReady && (
               <div className="calc-panel" role="status" aria-live="polite">
                 <div className="calc-spinner" aria-hidden="true">
@@ -320,23 +327,32 @@ export default function FilesPage() {
                   En train de calculer<span className="calc-dots"><span>.</span><span>.</span><span>.</span></span>
                 </div>
                 <p className="calc-sub">
-                  Vos données sont calculées dans Snowflake, puis envoyées à Power BI pour générer votre dashboard.
+                  Azure Data Factory charge vos données dans Snowflake et exécute les calculs KPI. Power BI
+                  affichera les résultats automatiquement.
                 </p>
                 <div className="calc-steps" aria-hidden="true">
                   <span className="calc-step done"><i className="fas fa-file-csv" /> CSV importé</span>
                   <i className="fas fa-arrow-right calc-step-arrow" />
-                  <span className="calc-step active"><i className="fas fa-snowflake" /> Calcul Snowflake</span>
+                  <span className="calc-step active"><i className="fas fa-snowflake" /> Data Factory + Snowflake</span>
                   <i className="fas fa-arrow-right calc-step-arrow" />
                   <span className="calc-step"><i className="fas fa-chart-column" /> Power BI</span>
                 </div>
-                {calcTimedOut && (
+
+                {calcError ? (
                   <div className="calc-timeout">
-                    <p>Le calcul prend plus de temps que prévu.</p>
+                    <p style={{ color: "#ff9db0" }}>{calcError}</p>
                     <button type="button" className="btn-ghost" onClick={() => setDashboardReady(true)}>
                       <i className="fas fa-chart-column" /> Afficher le dashboard
                     </button>
                   </div>
-                )}
+                ) : calcNote ? (
+                  <div className="calc-timeout">
+                    <p>{calcNote}</p>
+                    <button type="button" className="btn-ghost" onClick={() => setDashboardReady(true)}>
+                      <i className="fas fa-chart-column" /> Afficher le dashboard
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -393,33 +409,28 @@ export default function FilesPage() {
               </div>
             ) : (
               <div className="file-list">
-                {visible.map((f) => {
-                  const done = isReferenceDone(f.fileReference);
-                  return (
-                    <div className="file-row" key={f.id}>
-                      <div className="file-ic">
-                        <i className="fas fa-file-csv" />
-                      </div>
-                      <div className="file-meta">
-                        <div className="file-name">{f.fileName}</div>
-                        <div className="file-sub">
-                          Ref {f.fileReference} · {fmtDate(f.uploadedAt)}
-                        </div>
-                      </div>
-                      <span className={`badge ${done ? "ready" : "pending"}`}>
-                        {done ? "Terminé" : "En cours"}
-                      </span>
-                      <button
-                        type="button"
-                        className="icon-btn danger"
-                        title="Delete"
-                        onClick={() => handleDelete(f.id)}
-                      >
-                        <i className="fas fa-trash" />
-                      </button>
+                {visible.map((f) => (
+                  <div className="file-row" key={f.id}>
+                    <div className="file-ic">
+                      <i className="fas fa-file-csv" />
                     </div>
-                  );
-                })}
+                    <div className="file-meta">
+                      <div className="file-name">{f.fileName}</div>
+                      <div className="file-sub">
+                        Ref {f.fileReference} · {fmtDate(f.uploadedAt)}
+                      </div>
+                    </div>
+                    <span className="badge original">CSV</span>
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      title="Delete"
+                      onClick={() => handleDelete(f.id)}
+                    >
+                      <i className="fas fa-trash" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -429,15 +440,13 @@ export default function FilesPage() {
         <aside>
           <div className="rail-card">
             <h3 style={{ fontFamily: "Space Grotesk, sans-serif", marginBottom: 10 }}>Summary</h3>
-            <div className="rail-stat"><span className="k">Fichiers importés</span><span className="v">{counts.imported}</span></div>
-            <div className="rail-stat"><span className="k">Calculs terminés</span><span className="v">{counts.done}</span></div>
-            <div className="rail-stat"><span className="k">En cours</span><span className="v">{counts.processing}</span></div>
+            <div className="rail-stat"><span className="k">Fichiers importés</span><span className="v">{importedCount}</span></div>
           </div>
 
           <div className="rail-card">
             <h3 style={{ fontFamily: "Space Grotesk, sans-serif", marginBottom: 8 }}>Dashboards</h3>
             <p className="text-muted" style={{ marginBottom: 14, fontSize: "0.85rem" }}>
-              Processed data feeds your Power BI report. Open it in the Dashboards tab.
+              Vos données alimentent Power BI en direct depuis Snowflake. Ouvrez l&apos;onglet Dashboards.
             </p>
             <Link href="/dashboard/dashboards" className="btn-primary" style={{ width: "100%", textAlign: "center" }}>
               <i className="fas fa-chart-column" /> Open dashboards

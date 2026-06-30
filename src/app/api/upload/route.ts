@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
-import { isStorageConfigured, outputFileName, simulateLocalProcessing, uploadInput } from "@/lib/azure-storage";
+import { isStorageConfigured, uploadInput } from "@/lib/azure-storage";
 import { getStore } from "@/lib/db";
-import { isSnowflakeConfigured, triggerProcessing } from "@/lib/snowflake";
 import { validateCsvContent } from "@/lib/csvValidation";
 
 export const runtime = "nodejs";
@@ -21,10 +20,7 @@ export async function POST(req: Request) {
 
     const originalName = file.name;
     if (!originalName.toLowerCase().endsWith(".csv")) {
-      return NextResponse.json(
-        { success: false, message: "Only CSV input files are accepted. Outputs are produced as XLSX." },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, message: "Only CSV files are accepted." }, { status: 400 });
     }
 
     // Reference = first run of digits in the filename, else a random number.
@@ -33,21 +29,19 @@ export async function POST(req: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // 0) Server-side sanity check (safety net — mirrors the client validation,
-    //    so a direct API call can't bypass it).
+    // Server-side sanity check (mirrors the client validation so a direct API
+    // call can't bypass it).
     const validation = validateCsvContent(buffer.toString("utf8"));
     if (!validation.valid) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "CSV failed validation. Please fix the file and try again.",
-          validation,
-        },
+        { success: false, message: "CSV failed validation. Please fix the file and try again.", validation },
         { status: 400 }
       );
     }
 
-    // 1) Upload original CSV to INPUT/ (Azure or local)
+    // Upload the CSV to INPUT/. An Azure Data Factory blob-created trigger picks
+    // it up, loads it into Snowflake and runs the KPI calculations; Power BI
+    // reads the results directly from Snowflake. The app produces no file.
     let inputPath: string;
     try {
       inputPath = await uploadInput(originalName, buffer, file.type || "text/csv");
@@ -59,7 +53,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) Record the original + placeholders for the two expected outputs.
+    // Record the uploaded input (per-user history). No output records — there's
+    // no intermediate file; results live in Snowflake and surface via Power BI.
     const store = getStore();
     const original = await store.createFile({
       userId: user.id,
@@ -70,48 +65,14 @@ export async function POST(req: Request) {
       azurePath: inputPath,
       isReady: true,
     });
-    const output = await store.createFile({
-      userId: user.id,
-      fileName: outputFileName(fileReference),
-      originalName,
-      fileReference,
-      fileType: "output",
-    });
-
-    // 3) Kick off the calculation:
-    //    - keyless local mode  → simulate so the calculated file appears instantly
-    //    - Snowflake configured → trigger the proc; it writes the file to OUTPUT/
-    //    - otherwise            → an external pipeline writes to OUTPUT/ (we just wait)
-    let localDemo = false;
-    if (!isStorageConfigured()) {
-      try {
-        await simulateLocalProcessing(fileReference, originalName);
-        localDemo = true;
-      } catch (e) {
-        console.error("local processing simulation failed:", e);
-      }
-    } else if (isSnowflakeConfigured()) {
-      // Fire-and-forget: the UI polls /api/files/refresh until the output lands.
-      triggerProcessing({
-        reference: fileReference,
-        originalName,
-        inputPath,
-        outputName: outputFileName(fileReference),
-      }).catch((e) => console.error("snowflake trigger failed:", e));
-    }
 
     return NextResponse.json({
       success: true,
-      message: localDemo
-        ? "✅ Fichier importé. Calcul de démonstration généré — il apparaîtra dans un instant."
-        : "✅ Fichier importé. Calcul en cours…",
+      message: "✅ Fichier importé. Calcul en cours via Azure Data Factory + Snowflake…",
       originalFileName: originalName,
       fileReference,
-      localDemo,
-      tokens: {
-        original: original.fileToken,
-        output: output.fileToken,
-      },
+      uploadedAt: original.uploadedAt,
+      storageConfigured: isStorageConfigured(),
     });
   } catch (err) {
     console.error("upload error:", err);

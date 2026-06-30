@@ -4,7 +4,7 @@ export interface FileItem {
   originalName: string;
   fileToken: string;
   fileReference: string;
-  fileType: "original" | "output" | string;
+  fileType: "original" | string;
   azurePath: string | null;
   isReady: boolean;
   uploadedAt: string;
